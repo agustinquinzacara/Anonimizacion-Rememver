@@ -1,106 +1,188 @@
-Pipeline DICOM → NIfTI → Deface → DICOM
+Descripción
 
-Pipeline automatizado para:
+Pipeline para procesamiento de imágenes médicas:
 
 Anonimización de DICOM
-Conversión a NIfTI
-Defacing (remoción de rostro)
-Reconversión a DICOM
-Preservación de metadata relevante
-Versiones utilizadas
-Python: 3.13.13 (Windows)
-Ubuntu (WSL): 24.04.4 LTS
+Detección automática de T1
+Conversión DICOM → NIfTI
+Defacing (pydeface + FSL)
+Reconstrucción NIfTI → DICOM
+Limpieza automática de datos intermedios
+Requisitos
+Sistema
+Windows 10/11
+WSL2
+Ubuntu 24.04.4 LTS
+Python (Windows)
 
-Estas versiones fueron probadas y son las recomendadas para evitar incompatibilidades.
+Instalar desde:
 
-Estructura del proyecto
-ProyectoDICOM/
-│
-├── main.py
-├── check_env.py
-├── install.sh
-│
-└─ core/
-   ├── headers_core.py
-   ├── nifti.py
-   ├── deface2.py
-   ├── nifti_to_dicom_plastimatch.py
-   ├── fix_dicom_metadata.py
-   └── fix_nifti_dtype.py
-
-Entorno	Uso
-PowerShell	instalar WSL
-Ubuntu (WSL)	instalar herramientas
-CMD / PowerShell	ejecutar pipeline
-1. Instalar Python (Windows)
-
-Ejecutar en Windows.
-
-Descargar desde:
 https://www.python.org/downloads/
 
-Durante la instalación:
-
-Activar "Add Python to PATH"
-
-Verificar:
-
-python --version
-
-Debe mostrar:
+Versión requerida:
 
 Python 3.13.13
-2. Instalar WSL + Ubuntu
 
-Ejecutar en PowerShell (como administrador):
+Durante instalación:
+
+☑ Add Python to PATH
+Verificar Python
+
+En CMD o PowerShell:
+
+py --version
+
+o
+
+python --version
+Instalar dependencias Python
+
+En CMD o PowerShell:
+
+py -m pip install pydicom nibabel numpy
+
+o
+
+python -m pip install pydicom nibabel numpy
+Instalación WSL
+Instalar WSL
+
+En PowerShell (administrador):
 
 wsl --install
 
-Reiniciar el equipo.
+Reiniciar.
 
-Abrir Ubuntu desde el menú inicio.
+Instalar Ubuntu
 
-Configurar usuario:
+Desde Microsoft Store:
 
-username + password
+Ubuntu 24.04 LTS
 
-Verificar versión:
+Verificar en Ubuntu (WSL):
 
-wsl -l -v
-3. Instalación automática (recomendada)
+lsb_release -a
 
-Ejecutar en Ubuntu (WSL).
+Debe mostrar:
 
-Ir a la carpeta del proyecto:
+Description: Ubuntu 24.04.4 LTS
+Instalación automática (RECOMENDADO)
 
-cd /mnt/c/Users/TU_USUARIO/Desktop/ProyectoDICOM
+Colocar install.sh en el proyecto.
 
-Dar permisos:
+Ejecutar en Ubuntu (WSL):
 
+dos2unix install.sh
 chmod +x install.sh
-
-Ejecutar:
-
 ./install.sh
 Qué instala el script
 dcm2niix
 plastimatch
+pigz
 FSL
-pydeface
-nibabel
-numpy
-pydicom
-4. Verificar entorno
+Python tools base
+🔥 INSTALACIÓN PYDEFACE (IMPORTANTE)
+⚠️ Después del install.sh
 
-Ejecutar en Windows:
+Ejecutar en Ubuntu:
 
-python check_env.py
+pydeface --help
+❓ Si funciona
 
-Debe indicar que todas las herramientas están disponibles.
+✔ No hacer nada más
+✔ Continuar con pipeline
 
-5. Ejecutar pipeline
+❌ Si NO funciona
 
-Ejecutar en Windows:
+Ejecutar manualmente:
 
-cd C:\Users\TU_USUARIO\Desktop\ProyectoDICOM
+pip install setuptools --break-system-packages
+pip install pydeface --break-system-packages
+🧪 Verificación
+pydeface --help
+
+Instalación manual (alternativa)
+
+Si NO usas install.sh:
+
+sudo apt update
+sudo apt install -y \
+    dcm2niix \
+    plastimatch \
+    pigz \
+    python3-pip \
+    git
+Instalar FSL
+wget https://fsl.fmrib.ox.ac.uk/fsldownloads/fslinstaller.py
+python3 fslinstaller.py
+
+Luego:
+
+echo 'export FSLDIR=/usr/local/fsl' >> ~/.bashrc
+echo 'source $FSLDIR/etc/fslconf/fsl.sh' >> ~/.bashrc
+echo 'export PATH=$FSLDIR/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+Verificación del entorno
+
+Crear archivo:
+
+nano check_env.sh
+
+Contenido:
+
+#!/bin/bash
+
+echo "===== CHECK ENTORNO ====="
+
+echo "Python Windows:"
+cmd.exe /c "py --version"
+
+echo ""
+echo "Ubuntu:"
+lsb_release -a
+
+echo ""
+echo "dcm2niix:"
+which dcm2niix
+
+echo ""
+echo "plastimatch:"
+which plastimatch
+
+echo ""
+echo "FSL:"
+which fslreorient2std
+
+echo ""
+echo "pydeface:"
+which pydeface
+
+echo ""
+echo "===== FIN ====="
+
+Ejecutar:
+
+chmod +x check_env.sh
+./check_env.sh
+Uso del pipeline
+
+En CMD o PowerShell:
+
+py main.py
+
+o
+
 python main.py
+Estructura del proyecto
+ProyectoDICOM/
+│
+├── main.py
+├── core/
+│   ├── headers_core.py
+│   ├── nifti.py
+│   ├── deface2.py
+│   ├── nifti_to_dicom_plastimatch.py
+│   ├── fix_dicom_metadata.py
+│   ├── fix_nifti_dtype.py
+│
+└── install.sh
