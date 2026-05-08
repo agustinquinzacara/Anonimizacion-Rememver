@@ -4,18 +4,31 @@ from pydicom.uid import generate_uid
 
 
 def group_series(input_dir):
+
+    from pydicom.uid import generate_uid
+
     series = {}
 
     for root, _, files in os.walk(input_dir):
+
         for f in files:
+
             path = os.path.join(root, f)
 
             try:
                 ds = pydicom.dcmread(path, stop_before_pixels=True)
+
             except:
                 continue
 
-            uid = ds.SeriesInstanceUID
+            # =========================
+            # UID seguro
+            # =========================
+            uid = ds.get("SeriesInstanceUID", None)
+
+            # fallback si no existe
+            if uid is None:
+                uid = f"NO_UID_{root}"
 
             if uid not in series:
                 series[uid] = []
