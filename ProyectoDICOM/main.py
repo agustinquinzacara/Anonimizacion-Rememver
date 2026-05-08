@@ -57,8 +57,24 @@ def safe_rmtree(path):
 # =========================
 # T1 DETECTION
 # =========================
-def is_t1(series_path):
-    keywords = ["t1", "mprage", "spgr", "bravo", "tfe", "t1w"]
+def is_structural(series_path):
+
+    keywords = [
+        # T1
+        "t1",
+        "mprage",
+        "spgr",
+        "bravo",
+        "tfe",
+        "t1w",
+
+        # T2
+        "t2",
+        "t2w",
+        "flair",
+        "space",
+        "cube"
+    ]
 
     for root, _, files in os.walk(series_path):
         for f in files:
@@ -131,12 +147,12 @@ if __name__ == "__main__":
                 in_series = os.path.join(anon_path, series)
                 out_series = os.path.join(output_root, series)
 
-                if not is_t1(in_series):
+                if not is_structural(in_series):
                     shutil.copytree(in_series, out_series, dirs_exist_ok=True)
-                    print("SKIP (no T1)")
+                    print("SKIP (no T1/T2)")
                     continue
 
-                print("T1 PIPELINE")
+                print("STRUCTURAL PIPELINE")
 
                 tmp_dir = os.path.join(output_root, "_tmp_nifti")
                 os.makedirs(tmp_dir, exist_ok=True)
