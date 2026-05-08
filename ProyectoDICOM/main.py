@@ -31,6 +31,34 @@ def ask_prefix():
 
 
 # =========================
+# FIND DICOM SERIES
+# =========================
+def find_dicom_series(root_dir):
+
+    series = []
+
+    for root, _, files in os.walk(root_dir):
+
+        dicom_found = False
+
+        for f in files:
+
+            path = os.path.join(root, f)
+
+            try:
+                pydicom.dcmread(path, stop_before_pixels=True)
+                dicom_found = True
+                break
+
+            except:
+                pass
+
+        if dicom_found:
+            series.append(root)
+
+    return sorted(series)
+
+# =========================
 # UTILS
 # =========================
 def to_wsl(p):
@@ -134,18 +162,18 @@ if __name__ == "__main__":
         output_root = anon_path + "_processed"
         os.makedirs(output_root, exist_ok=True)
 
-        series_list = [
-            s for s in os.listdir(anon_path)
-            if os.path.isdir(os.path.join(anon_path, s))
-        ]
+        series_list = find_dicom_series(anon_path)
 
-        for series in series_list:
+        for in_series in series_list:
 
-            print(f"\nSERIES: {series}")
+            series_name = os.path.basename(in_series)
+
+            print(f"\nSERIES: {series_name}")
 
             try:
-                in_series = os.path.join(anon_path, series)
-                out_series = os.path.join(output_root, series)
+                relative = os.path.relpath(in_series, anon_path)
+
+                out_series = os.path.join(output_root, relative)
 
                 if not is_structural(in_series):
                     shutil.copytree(in_series, out_series, dirs_exist_ok=True)
