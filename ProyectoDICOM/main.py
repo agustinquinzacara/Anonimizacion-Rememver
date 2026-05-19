@@ -13,7 +13,7 @@ from core.fix_nifti_dtype import fix_dtype
 
 
 # =========================
-# UI
+# INTERFAZ
 # =========================
 def select_root():
     root = Tk()
@@ -31,7 +31,7 @@ def ask_prefix():
 
 
 # =========================
-# FIND DICOM SERIES
+# BÚSQUEDA DE SERIES DICOM
 # =========================
 def find_dicom_series(root_dir):
 
@@ -58,37 +58,42 @@ def find_dicom_series(root_dir):
 
     return sorted(series)
 
+
 # =========================
-# UTILS
+# UTILIDADES
 # =========================
 def to_wsl(p):
     return p.replace("C:", "/mnt/c").replace("\\", "/")
 
 
 def safe_rmtree(path):
-    """Borrado robusto en Windows"""
+    """Eliminación robusta de carpetas en Windows"""
+
     if not os.path.exists(path):
         return
 
     for i in range(3):
+
         try:
             shutil.rmtree(path)
             print(f"🗑️ Eliminado: {path}")
             return
+
         except Exception as e:
-            print(f"⚠️ intento {i+1} falló eliminando {path}: {e}")
+            print(f"⚠️ Intento {i+1} falló eliminando {path}: {e}")
             time.sleep(1)
 
     print(f"❌ No se pudo eliminar: {path}")
 
 
 # =========================
-# T1 DETECTION
+# DETECCIÓN DE SERIES
 # =========================
 def is_structural(series_path):
 
     keywords = [
-        # T1
+
+        # Resonancia magnética T1
         "t1",
         "mprage",
         "spgr",
@@ -96,7 +101,7 @@ def is_structural(series_path):
         "tfe",
         "t1w",
 
-        # T2
+        # Resonancia magnética T2
         "t2",
         "t2w",
         "flair",
@@ -105,15 +110,61 @@ def is_structural(series_path):
     ]
 
     for root, _, files in os.walk(series_path):
+
         for f in files:
+
+            path = os.path.join(root, f)
+
             try:
-                ds = pydicom.dcmread(os.path.join(root, f), stop_before_pixels=True)
+                ds = pydicom.dcmread(path, stop_before_pixels=True)
+
+                modality = str(ds.get("Modality", "")).upper()
 
                 text = " ".join([
                     str(ds.get("SeriesDescription", "")).lower(),
-                    str(ds.get("ProtocolName", "")).lower()
+                    str(ds.get("ProtocolName", "")).lower(),
+                    str(ds.get("StudyDescription", "")).lower()
                 ])
 
+                # =====================
+                # IGNORAR INFORMES SR
+                # =====================
+                if modality == "SR":
+                    continue
+
+                # =====================
+                # IGNORAR SERIES AUXILIARES
+                # =====================
+                exclude_keywords = [
+                    "localizer",
+                    "scout",
+                    "topogram",
+                    "topo",
+                    "survey",
+                    "dose",
+                    "smartprep",
+                    "locator",
+                    "pilot",
+                    "reformat",
+                    "mip",
+                    "3plane",
+                    "reference",
+                    "monitor",
+                    "screen save"
+                ]
+
+                if any(k in text for k in exclude_keywords):
+                    continue
+
+                # =====================
+                # TOMOGRAFÍA COMPUTADA
+                # =====================
+                if modality == "CT":
+                    return True
+
+                # =====================
+                # RESONANCIA MAGNÉTICA
+                # =====================
                 if any(k in text for k in keywords):
                     return True
 
@@ -129,6 +180,7 @@ def is_structural(series_path):
 if __name__ == "__main__":
 
     root_dir = select_root()
+
     if not root_dir:
         exit()
 
@@ -151,15 +203,21 @@ if __name__ == "__main__":
         print(f"\nSUBJECT: {subj} → {patient_name}")
 
         # =========================
-        # 1. ANONIMIZACIÓN
+        # 1. ANONIMIZACIÓN DICOM
         # =========================
         anon_path = os.path.join(root_dir, "anonimizados", patient_name)
-        anonymize_subject(subj_path, anon_path, patient_name)
+
+        anonymize_subject(
+            subj_path,
+            anon_path,
+            patient_name
+        )
 
         # =========================
         # 2. PROCESAMIENTO
         # =========================
         output_root = anon_path + "_processed"
+
         os.makedirs(output_root, exist_ok=True)
 
         series_list = find_dicom_series(anon_path)
@@ -175,61 +233,113 @@ if __name__ == "__main__":
 
                 out_series = os.path.join(output_root, relative)
 
+                # =====================
+                # VALIDAR SI ES ESTRUCTURAL
+                # =====================
                 if not is_structural(in_series):
-                    shutil.copytree(in_series, out_series, dirs_exist_ok=True)
-                    print("SKIP (no T1/T2)")
+
+                    shutil.copytree(
+                        in_series,
+                        out_series,
+                        dirs_exist_ok=True
+                    )
+
+                    print("SKIP (no estructural)")
                     continue
 
-                print("STRUCTURAL PIPELINE")
+                print(f"PIPELINE ESTRUCTURAL ({series_name})")
 
-                tmp_dir = os.path.join(output_root, "_tmp_nifti")
+                # =====================
+                # DIRECTORIO TEMPORAL
+                # =====================
+                tmp_dir = os.path.join(
+                    output_root,
+                    "_tmp_nifti"
+                )
+
                 os.makedirs(tmp_dir, exist_ok=True)
 
-                dicom_to_nifti(to_wsl(in_series), to_wsl(tmp_dir))
+                # =====================
+                # DICOM → NIFTI
+                # =====================
+                dicom_to_nifti(
+                    to_wsl(in_series),
+                    to_wsl(tmp_dir)
+                )
 
                 nii_files = [
                     os.path.join(tmp_dir, f)
                     for f in os.listdir(tmp_dir)
-                    if f.endswith(".nii.gz") and "_defaced" not in f
+                    if f.endswith(".nii.gz")
+                    and "_defaced" not in f
                 ]
 
                 if not nii_files:
-                    raise RuntimeError("No NIfTI generado")
+                    raise RuntimeError("No se generó NIfTI")
 
-                nii = max(nii_files, key=os.path.getctime)
+                nii = max(
+                    nii_files,
+                    key=os.path.getctime
+                )
 
+                # =====================
+                # CORRECCIÓN DE DTYPE
+                # =====================
                 fix_dtype(nii)
 
-                defaced = nii.replace(".nii.gz", "_defaced.nii.gz")
-                deface_nifti(to_wsl(nii), to_wsl(defaced))
+                # =====================
+                # DEFACING
+                # =====================
+                defaced = nii.replace(
+                    ".nii.gz",
+                    "_defaced.nii.gz"
+                )
 
-                # borrar nifti original
+                deface_nifti(
+                    to_wsl(nii),
+                    to_wsl(defaced)
+                )
+
+                # =====================
+                # ELIMINAR NIFTI ORIGINAL
+                # =====================
                 try:
                     os.remove(nii)
+
                 except:
                     pass
 
+                # =====================
+                # NIFTI → DICOM
+                # =====================
                 nifti_to_dicom_plastimatch(
                     to_wsl(defaced),
                     to_wsl(in_series),
                     to_wsl(out_series)
                 )
 
-                fix_metadata(in_series, out_series)
+                # =====================
+                # CORRECCIÓN DE METADATOS
+                # =====================
+                # fix_metadata(in_series, out_series)
 
+                # =====================
+                # LIMPIEZA TEMPORAL
+                # =====================
                 safe_rmtree(tmp_dir)
 
-                print("OK")
+                print("✔ Procesamiento completado")
 
             except Exception as e:
-                print("ERROR:", e)
+                print("❌ ERROR:", e)
 
         # =========================
-        # 🔥 BORRADO FINAL
+        # 3. LIMPIEZA FINAL
         # =========================
-        print(f"\n🧹 Limpiando anonimizados sin procesar: {anon_path}")
+        print(f"\n🧹 Eliminando anonimizados temporales: {anon_path}")
+
         safe_rmtree(anon_path)
 
         counter += 1
 
-    print("\nPIPELINE COMPLETO")
+    print("\n✅ PIPELINE COMPLETO")

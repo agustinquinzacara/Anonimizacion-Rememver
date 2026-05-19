@@ -3,9 +3,10 @@ import pydicom
 from pydicom.uid import generate_uid
 
 
+# =========================
+# AGRUPAR SERIES DICOM
+# =========================
 def group_series(input_dir):
-
-    from pydicom.uid import generate_uid
 
     series = {}
 
@@ -16,17 +17,20 @@ def group_series(input_dir):
             path = os.path.join(root, f)
 
             try:
-                ds = pydicom.dcmread(path, stop_before_pixels=True)
+                ds = pydicom.dcmread(
+                    path,
+                    stop_before_pixels=True
+                )
 
             except:
                 continue
 
             # =========================
-            # UID seguro
+            # OBTENER SERIES INSTANCE UID
             # =========================
             uid = ds.get("SeriesInstanceUID", None)
 
-            # fallback si no existe
+            # fallback si no existe UID
             if uid is None:
                 uid = f"NO_UID_{root}"
 
@@ -38,22 +42,35 @@ def group_series(input_dir):
     return series
 
 
-def anonymize_subject(input_dir, output_dir, patient_name):
+# =========================
+# ANONIMIZACIÓN DICOM
+# =========================
+def anonymize_subject(
+    input_dir,
+    output_dir,
+    patient_name
+):
 
     series_dict = group_series(input_dir)
 
+    # UID único para el estudio completo
     new_study_uid = generate_uid()
 
     for series_uid, files in series_dict.items():
 
+        # UID único por serie
         new_series_uid = generate_uid()
 
         for f in files:
+
             ds = pydicom.dcmread(f)
 
-            # --- ANON ---
+            # =========================
+            # ANONIMIZACIÓN PACIENTE
+            # =========================
             ds.PatientName = patient_name
             ds.PatientID = patient_name
+
             ds.PatientBirthDate = ""
             ds.PatientSex = ""
 
@@ -63,13 +80,49 @@ def anonymize_subject(input_dir, output_dir, patient_name):
             ds.PatientAddress = ""
             ds.OtherPatientIDs = ""
 
-            # --- UID ---
+            # =========================
+            # REEMPLAZO DE UID
+            # =========================
             ds.StudyInstanceUID = new_study_uid
             ds.SeriesInstanceUID = new_series_uid
             ds.SOPInstanceUID = generate_uid()
 
-            rel = os.path.relpath(os.path.dirname(f), input_dir)
-            save_dir = os.path.join(output_dir, rel)
-            os.makedirs(save_dir, exist_ok=True)
+            # =========================
+            # NOMBRE DE LA SERIE
+            # =========================
+            series_name = str(
+                ds.get(
+                    "SeriesDescription",
+                    "SERIE"
+                )
+            )
 
-            ds.save_as(os.path.join(save_dir, os.path.basename(f)))
+            # limpiar caracteres inválidos
+            series_name = "".join(
+                c if c.isalnum() or c in " _-"
+                else "_"
+                for c in series_name
+            )
+
+            # =========================
+            # CREAR DIRECTORIO
+            # =========================
+            save_dir = os.path.join(
+                output_dir,
+                series_name
+            )
+
+            os.makedirs(
+                save_dir,
+                exist_ok=True
+            )
+
+            # =========================
+            # GUARDAR DICOM
+            # =========================
+            ds.save_as(
+                os.path.join(
+                    save_dir,
+                    os.path.basename(f)
+                )
+            )
