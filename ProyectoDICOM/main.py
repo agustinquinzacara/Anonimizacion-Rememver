@@ -2,7 +2,9 @@ import os
 import shutil
 import time
 import pydicom
-from tkinter import Tk, filedialog, simpledialog
+
+from tkinter import Tk, filedialog, simpledialog, Toplevel, Label, Button, StringVar
+from tkinter.ttk import Combobox
 
 from core.headers_core import anonymize_subject
 from core.nifti import dicom_to_nifti
@@ -10,6 +12,12 @@ from core.deface2 import deface_nifti
 from core.nifti_to_dicom_plastimatch import nifti_to_dicom_plastimatch
 from core.fix_dicom_metadata import fix_metadata
 from core.fix_nifti_dtype import fix_dtype
+from core.redcap_lookup import (select_redcap_csv, get_patient_id, find_redcap_id)
+from core.pending_subjects import move_to_pending
+from datetime import datetime
+from core.log_generation import (write_log, generate_summary, log_fatal_error)
+
+
 
 
 # =========================
@@ -22,12 +30,80 @@ def select_root():
     return filedialog.askdirectory(title="Selecciona carpeta con sujetos")
 
 
+# =========================
+# SELECCIONAR CENTRO
+# =========================
 def ask_prefix():
+
+    centros = {
+
+        "Hospital Guillermo Grant Benavente": "HGGB",
+        "Hospital Salvador": "HDS",
+        "Hospital Clínico San Borja Arriarán": "HCSBA",
+        "Hospital San José": "HSJ",
+        "Hospital Base Valdivia": "HBV",
+        "Hospital Hernán Henriquez Aravena": "HHHA",
+        "Otro Centro": "OTR",
+        "Pruebas": "TEST"
+
+    }
+
     root = Tk()
     root.withdraw()
-    prefix = simpledialog.askstring("Prefijo", "Ej: SUB, PAC, CTRL")
-    start = simpledialog.askinteger("Inicio", "Número inicial", initialvalue=1)
-    return prefix, start
+
+    ventana = Toplevel()
+    ventana.title("Seleccionar centro")
+    ventana.geometry("500x150")
+    ventana.attributes("-topmost", True)
+
+    Label(
+        ventana,
+        text="Seleccione el centro:",
+        font=("Arial", 10, "bold")
+    ).pack(pady=10)
+
+    seleccion = StringVar()
+
+    combo = Combobox(
+        ventana,
+        textvariable=seleccion,
+        width=60,
+        state="readonly"
+    )
+
+    combo["values"] = [
+        f"{nombre} ({prefijo})"
+        for nombre, prefijo in centros.items()
+    ]
+
+    combo.current(0)
+    combo.pack(pady=5)
+
+    resultado = {"prefijo": None}
+
+    def aceptar():
+
+        texto = seleccion.get()
+
+        for nombre, prefijo in centros.items():
+
+            if texto.startswith(nombre):
+
+                resultado["prefijo"] = prefijo
+                break
+
+        ventana.destroy()
+
+    Button(
+        ventana,
+        text="Aceptar",
+        command=aceptar
+    ).pack(pady=15)
+
+    ventana.grab_set()
+    ventana.wait_window()
+
+    return resultado["prefijo"]
 
 
 # =========================
@@ -58,6 +134,31 @@ def find_dicom_series(root_dir):
 
     return sorted(series)
 
+# =========================
+# CONTAR DICOM
+# =========================
+def count_dicoms(series_path):
+
+    n = 0
+
+    for root, _, files in os.walk(series_path):
+
+        for f in files:
+
+            path = os.path.join(root, f)
+
+            try:
+                pydicom.dcmread(
+                    path,
+                    stop_before_pixels=True
+                )
+
+                n += 1
+
+            except:
+                pass
+
+    return n
 
 # =========================
 # UTILIDADES
@@ -141,7 +242,6 @@ def is_structural(series_path):
                     "topogram",
                     "topo",
                     "survey",
-                    "dose",
                     "smartprep",
                     "locator",
                     "pilot",
@@ -159,7 +259,24 @@ def is_structural(series_path):
                 # =====================
                 # TOMOGRAFÍA COMPUTADA
                 # =====================
+
+                print(f"\nSerie: {text}")
+                print(f"Modalidad: {modality}")
+
                 if modality == "CT":
+
+                    ct_keywords = [
+                        "angio",
+                        "partes blandas",
+                        "retorno",
+                        "cortical",
+                        "coronal",
+                        "axial"
+                    ]
+
+                    if any(k in text for k in ct_keywords):
+                        return True
+
                     return True
 
                 # =====================
@@ -174,20 +291,78 @@ def is_structural(series_path):
     return False
 
 
+
 # =========================
 # MAIN
 # =========================
 if __name__ == "__main__":
 
+    # =========================
+    # SELECCIÓN DE CARPETA RAÍZ
+    # =========================
     root_dir = select_root()
 
     if not root_dir:
         exit()
 
-    prefix, counter = ask_prefix()
+    # =========================
+    # INICIALIZACIÓN DE LOGS
+    # =========================
+
+    # Fecha de inicio del pipeline
+    fecha_inicio = datetime.now()
+
+    # Carpeta donde se almacenarán los logs
+    log_dir = os.path.join(
+        os.path.dirname(__file__),
+        "logs"
+    )
+
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Timestamp para nombres únicos
+    timestamp = fecha_inicio.strftime(
+        "%Y%m%d_%H%M%S"
+    )
+
+    # Log completo de ejecución
+    log_file = os.path.join(
+        log_dir,
+        f"pipeline_{timestamp}.log"
+    )
+
+
+    write_log(log_file, "===== INICIO PIPELINE =====")
+
+    write_log(log_file, f"Carpeta raíz: {root_dir}")
+
+
+    # =========================
+    # VARIABLES PARA RESUMEN
+    # =========================
+
+    procesados = []
+    pendientes = []
+    errores = []
+    series_procesadas = []
+    series_error = []
+
+    # =========================
+    # CONFIGURACIÓN DEL ESTUDIO
+    # =========================
+    prefix = ask_prefix()
+
+    csv_file = select_redcap_csv(root_dir)
+
+    if not csv_file:
+        print("❌ No se seleccionó CSV REDCap")
+        exit()
 
     print("\nROOT:", root_dir)
 
+    # =========================
+    # BÚSQUEDA DE SUJETOS
+    # =========================
     subjects = [
         d for d in os.listdir(root_dir)
         if os.path.isdir(os.path.join(root_dir, d))
@@ -195,10 +370,64 @@ if __name__ == "__main__":
         and d != "anonimizados"
     ]
 
+    # =========================
+    # PROCESAMIENTO DE SUJETOS
+    # =========================
     for subj in sorted(subjects):
 
         subj_path = os.path.join(root_dir, subj)
-        patient_name = f"{prefix}-{counter:03d}"
+
+        write_log(log_file, f"===== INICIO SUJETO: {subj} =====")
+
+        # Obtener RUT desde el header DICOM
+        rut = get_patient_id(subj_path)
+
+        write_log(log_file, f"RUT encontrado: {rut}")
+
+        if not rut:
+
+            write_log(log_file, f"ERROR: no se encontró PatientID para {subj}")
+
+            errores.append(
+                f"{subj} (sin PatientID)"
+            )
+
+            continue
+
+        # =========================
+        # BÚSQUEDA EN REDCAP
+        # =========================
+        redcap_id = find_redcap_id(
+            csv_file,
+            rut
+        )
+
+        # sujeto no encontrado
+        if redcap_id is None:
+
+            print(
+                f"⚠ RUT no encontrado en REDCap: {rut}"
+            )
+
+            move_to_pending(
+                subj_path,
+                root_dir
+            )
+
+            pendientes.append(f"{subj} (RUT: {rut})")
+            write_log(log_file, f"Sujeto movido a pendientes REDCap: {subj} | RUT: {rut}")
+
+            continue
+
+        # generar identificador final
+        patient_name = (
+            f"{prefix}-{redcap_id}"
+        )
+
+        print(
+            f"✔ ID REDCap encontrado: "
+            f"{patient_name}"
+        )
 
         print(f"\nSUBJECT: {subj} → {patient_name}")
 
@@ -206,6 +435,8 @@ if __name__ == "__main__":
         # 1. ANONIMIZACIÓN DICOM
         # =========================
         anon_path = os.path.join(root_dir, "anonimizados", patient_name)
+
+        write_log(log_file, "Iniciando anonimización DICOM")
 
         anonymize_subject(
             subj_path,
@@ -226,12 +457,37 @@ if __name__ == "__main__":
 
             series_name = os.path.basename(in_series)
 
-            print(f"\nSERIES: {series_name}")
+            write_log(log_file, f"Procesando serie: {series_name}")
 
             try:
                 relative = os.path.relpath(in_series, anon_path)
 
                 out_series = os.path.join(output_root, relative)
+
+                # =====================
+                # EVITAR SERIES MUY PEQUEÑAS
+                # =====================
+                n_dicoms = count_dicoms(in_series)
+
+                if n_dicoms < 5:
+
+                    shutil.copytree(
+                        in_series,
+                        out_series,
+                        dirs_exist_ok=True
+                    )
+
+                    print(
+                        f"SKIP ({n_dicoms} cortes)"
+                    )
+
+                    write_log(
+                        log_file,
+                        f"Serie omitida (<5 cortes): {series_name}"
+                    )
+
+                    continue
+
 
                 # =====================
                 # VALIDAR SI ES ESTRUCTURAL
@@ -244,7 +500,8 @@ if __name__ == "__main__":
                         dirs_exist_ok=True
                     )
 
-                    print("SKIP (no estructural)")
+                    write_log(log_file, f"Serie omitida (no estructural): {series_name}")
+
                     continue
 
                 print(f"PIPELINE ESTRUCTURAL ({series_name})")
@@ -285,7 +542,7 @@ if __name__ == "__main__":
                 # =====================
                 # CORRECCIÓN DE DTYPE
                 # =====================
-                fix_dtype(nii)
+                #  fix_dtype(nii)
 
                 # =====================
                 # DEFACING
@@ -328,18 +585,39 @@ if __name__ == "__main__":
                 # =====================
                 safe_rmtree(tmp_dir)
 
+                write_log(log_file, f"Serie procesada correctamente: {series_name}")
+
                 print("✔ Procesamiento completado")
 
+                series_procesadas.append(f"{patient_name} | {series_name}")
+
             except Exception as e:
-                print("❌ ERROR:", e)
+
+                series_error.append(f"{patient_name} | {series_name} | {str(e)}")
+                write_log(log_file, f"ERROR | Sujeto: {subj} | Serie: {series_name} | {str(e)}")
 
         # =========================
         # 3. LIMPIEZA FINAL
         # =========================
         print(f"\n🧹 Eliminando anonimizados temporales: {anon_path}")
 
+        write_log(log_file, f"===== FIN SUJETO: {patient_name} =====")
+
         safe_rmtree(anon_path)
 
-        counter += 1
+        procesados.append(patient_name)
+
+    generate_summary(
+        root_dir,
+        fecha_inicio,
+        procesados,
+        pendientes,
+        errores,
+        series_procesadas,
+        series_error
+    )
+
+    write_log(log_file, "===== FIN PIPELINE =====")
 
     print("\n✅ PIPELINE COMPLETO")
+	    
